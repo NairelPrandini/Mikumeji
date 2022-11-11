@@ -7,28 +7,25 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using Raylib_cs;
 using static Raylib_cs.Raylib;
+using static WinApiFunctions;
 public class Character
 {
     Vector2 Position;
     bool Flipped = false;
     Texture2D Sprite;
-    float Rotation = 0;
     Vector2 Velocity = Vector2.Zero;
     bool Grounded = false;
-
-    public Rectangle Hitbox;
+    Rectangle Hitbox;
 
     public Character(Vector2 P, Texture2D T)
     {
         Position = P;
         Sprite = T;
 
-
     }
 
     public void Render()
     {
-
 
         Rectangle Source = new Rectangle(0, 0, Sprite.width, Sprite.height);
 
@@ -42,107 +39,113 @@ public class Character
         Rectangle Dest = new Rectangle(Position.X, Position.Y, Sprite.width, Sprite.height);
         Vector2 Origin = new Vector2(Sprite.width / 2, Sprite.height);
 
+
         Hitbox = new Rectangle(Position.X - Origin.X, Position.Y - Origin.Y, Sprite.width, Sprite.height);
 
-
-
-        Raylib.DrawTexturePro(Sprite, Source, Dest, Origin, Rotation, Color.WHITE);
+        Raylib.DrawTexturePro(Sprite, Source, Dest, Origin, 0, Color.WHITE);
     }
 
 
     float Gravity = 9.81f;
-
     float FallTime = 0;
-
     Rectangle ScreenBounds;
-
-    public Vector2 ThrowVector = Vector2.Zero;
-
+    Vector2 ThrowVector;
 
 
 
 
+    float MinY = 0;
 
     public void Physics()
     {
         ScreenBounds = WinApiFunctions.GetWorkAreaRect();
 
-        List<WinApiFunctions.DesktopWindow> WalkableWindows = new List<WinApiFunctions.DesktopWindow>();
-        foreach (var W in WinApiFunctions.GetWindows())
-        {
-            if (W.Bounds.x == 0 && W.Bounds.y == 0 & W.Bounds.height >= GetMonitorHeight(0) && W.Bounds.width >= GetMonitorWidth(0)) continue;
+        List<Window> WalkableWindows = GetWindows().Where(W => Position.X > W.WRect.Left && Position.X < W.WRect.Right && Position.Y <= W.WRect.Top + 25 && W.WRect.Top >= 0).ToList();
+        List<Window> RelevantWindows = GetWindows().Where(W => Position.X > W.WRect.Left && Position.X < W.WRect.Right).ToList();
 
-            if (W.Title.Trim() == "Alternância de Tarefas") continue;
-            if (Position.X > W.Bounds.x && Position.X < W.Bounds.width + W.Bounds.x)
+
+
+        bool FullScreenActive = false;
+
+        foreach (var W in GetWindows())
+        {
+            if (W.Bounds.y == -32000 && W.Bounds.x == -32000)
             {
-                WalkableWindows.Add(W);
+                FullScreenActive = true;
             }
         }
 
-        float MinY;
 
-        if (WalkableWindows.Count > 0)
+        if (FullScreenActive)
         {
-            var BestWindow = WalkableWindows.OrderBy(o => o.Layer).First().Bounds;
+            WinApiFunctions.SetScreenToMonitorArea();
+            MinY = Raylib.GetMonitorHeight(0);
+        }
 
-            if (Position.Y - BestWindow.y >= -10 && Position.Y - BestWindow.y <= 10)
+        if (!FullScreenActive)
+        {
+            WinApiFunctions.SetScreenToWorkArea();
+
+            if (WalkableWindows.Count > 0)
             {
-                MinY = BestWindow.y;
+                var BestWindow = WalkableWindows.OrderBy(o => o.Bounds.y).First();
+
+                bool BestWindowWalkable = true;
+
+                foreach (var W in RelevantWindows)
+                {
+                    if (BestWindow.Layer > W.Layer)
+                    {
+                        if (BestWindow.WRect.Top > W.WRect.Top && BestWindow.WRect.Top < W.WRect.Bottom)
+                        {
+                            BestWindowWalkable = false;
+                        }
+                    }
+                }
+
+                if (BestWindowWalkable && Position.Y > 0)
+                    MinY = BestWindow.Bounds.y;
+                else
+                    MinY = ScreenBounds.height - ScreenBounds.y;
+
             }
             else
             {
                 MinY = ScreenBounds.height - ScreenBounds.y;
             }
+
         }
         else
         {
-            MinY = ScreenBounds.height - ScreenBounds.y;
+            MinY = GetMonitorHeight(0);
         }
 
 
 
 
-
-
-
-        if (MinY == Position.Y)
+        if (MinY == Position.Y && Velocity.Y >= 0 && Position.Y >= 0)
         {
-            if (Velocity.Y >= 0)
-            {
-                Velocity = Vector2.Zero;
-                //Comment Below For Cool Behaviour (i have no idea why it just works)
-                ThrowVector = Vector2.Zero;
-                Grounded = true;
-            }
-        }
-        else
-        {
-            Grounded = false;
-        }
-
-        if (Position.Y < 0)
-            Grounded = false;
-        if (Position.Y == ScreenBounds.height - ScreenBounds.y)
+            Velocity = Vector2.Zero;
+            ThrowVector = Vector2.Zero;
             Grounded = true;
-
-
-        if (!OnDrag && !Grounded && 1 == 2)
-        {
-            ThrowVector *= 0.01f;
-            Velocity = ThrowVector;
         }
+        else
+        {
+            Grounded = false;
+        }
+
 
         if (Grounded || OnDrag)
         {
-
             Velocity = Vector2.Zero;
             FallTime = 0;
         }
 
-        Velocity.Y = (Gravity * MathF.Pow(FallTime, 2)) + ThrowVector.Y;
-        Velocity.X = 0 + ThrowVector.X;
+        Velocity.Y = (Gravity * MathF.Pow(FallTime, 2) + ThrowVector.Y) * GetFrameTime() * 100;
+        Velocity.X = ThrowVector.X * GetFrameTime() * 100;
         Velocity.X = Math.Clamp(Velocity.X, -10, 10);
         Velocity.Y = Math.Clamp(Velocity.Y, -10, 10);
+
 
         if (!Grounded)
         {
@@ -157,14 +160,13 @@ public class Character
     }
 
 
-    Vector2 DragStartOffset = Vector2.Zero;
-    bool OnDrag = false;
 
 
+    Vector2 DragStartOffset;
+    bool OnDrag;
 
     public void Drag()
     {
-
 
         if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_RIGHT))
         {
@@ -175,8 +177,6 @@ public class Character
             }
         }
 
-
-
         if (IsMouseButtonReleased(MouseButton.MOUSE_BUTTON_RIGHT))
         {
             OnDrag = false;
@@ -185,9 +185,8 @@ public class Character
         if (OnDrag)
         {
             Position = DragStartOffset + GetMousePosition();
-            ThrowVector = GetMouseDelta() * GetFrameTime() * 5;
+            ThrowVector = GetMouseDelta() * GetFrameTime() * 7.5f;
         }
-
 
     }
 
